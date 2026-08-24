@@ -32,10 +32,21 @@ weaker evidence, or fabricated approval.
 
 Use the installed script only to bootstrap:
 
+**PowerShell:**
+
 ```powershell
 python "<skill-dir>\scripts\evidence_state.py" init `
   --repo-root "<repository-root>" `
   --run-name "<short-run-name>" `
+  --tasks-file "<tasks-input.jsonl>"
+```
+
+**bash/zsh:**
+
+```bash
+python "<skill-dir>/scripts/evidence_state.py" init \
+  --repo-root "<repository-root>" \
+  --run-name "<short-run-name>" \
   --tasks-file "<tasks-input.jsonl>"
 ```
 
@@ -69,6 +80,10 @@ copied `state_machine.py` for every later managed-state change.
 - A task needs a clean adversarial pass and a distinct qualifying lead pass
   against the same machine-computed artifact manifest. Later proof-changing
   events invalidate the prior validation.
+- A task revision counts as a proof-changing event even when it is a
+  non-material title, acceptance, or evidence clarification: it bumps the
+  task's revision and discards all prior tandem, review, and lead-validation
+  evidence for that task, restarting the cycle from scratch.
 - Count unique current task IDs with lead-validated dispositions, never evidence
   lines. Blocked work, stale artifacts, invalid retirement chains, incomplete
   dependencies, or integrity mismatches prevent completion.

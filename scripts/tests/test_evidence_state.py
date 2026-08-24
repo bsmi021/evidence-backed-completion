@@ -337,6 +337,102 @@ class EvidenceStateTests(unittest.TestCase):
             )
             self.assertTrue(json.loads(verified.stdout)["valid"])
 
+    def test_failed_tasks_file_import_rolls_back_new_run_directory_early_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tasks_file = root / "input-tasks.jsonl"
+            tasks_file.write_text(
+                "\n".join(
+                    [
+                        json.dumps(task("TASK-001")),
+                        json.dumps(task("TASK-001")),
+                        json.dumps(task("TASK-002")),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(STATE.TransitionError, r"input-tasks\.jsonl:2") as ctx:
+                STATE.initialize_run(root, "duplicate-early", tasks_file=tasks_file)
+            self.assertIn("Task already exists", str(ctx.exception))
+
+            candidates = list((root / "runs").glob("*duplicate-early*")) if (root / "runs").exists() else []
+            self.assertEqual([], candidates)
+
+    def test_failed_tasks_file_import_rolls_back_new_run_directory_late_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tasks_file = root / "input-tasks.jsonl"
+            tasks_file.write_text(
+                "\n".join(
+                    [
+                        json.dumps(task("TASK-001")),
+                        json.dumps(task("TASK-002")),
+                        json.dumps(task("TASK-003")),
+                        json.dumps(task("TASK-003")),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(STATE.TransitionError, r"input-tasks\.jsonl:4") as ctx:
+                STATE.initialize_run(root, "duplicate-late", tasks_file=tasks_file)
+            self.assertIn("Task already exists", str(ctx.exception))
+
+            candidates = list((root / "runs").glob("*duplicate-late*")) if (root / "runs").exists() else []
+            self.assertEqual([], candidates)
+
+    def test_failed_tasks_file_import_rolls_back_on_malformed_json(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tasks_file = root / "input-tasks.jsonl"
+            tasks_file.write_text(
+                "\n".join(
+                    [
+                        json.dumps(task("TASK-001")),
+                        "{not-valid-json",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(STATE.TransitionError, r"input-tasks\.jsonl:2") as ctx:
+                STATE.initialize_run(root, "malformed-json", tasks_file=tasks_file)
+            self.assertIsInstance(ctx.exception.__cause__, json.JSONDecodeError)
+
+            candidates = list((root / "runs").glob("*malformed-json*")) if (root / "runs").exists() else []
+            self.assertEqual([], candidates)
+
+    def test_failed_tasks_file_import_rolls_back_on_missing_tasks_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            missing_tasks_file = root / "does-not-exist.jsonl"
+
+            with self.assertRaises(FileNotFoundError):
+                STATE.initialize_run(root, "missing-file", tasks_file=missing_tasks_file)
+
+            candidates = list((root / "runs").glob("*missing-file*")) if (root / "runs").exists() else []
+            self.assertEqual([], candidates)
+
+    def test_successful_tasks_file_import_is_unaffected_by_rollback_handling(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tasks_file = root / "input-tasks.jsonl"
+            tasks_file.write_text(
+                "\n".join([json.dumps(task("TASK-001")), json.dumps(task("TASK-002"))]) + "\n",
+                encoding="utf-8",
+            )
+
+            run_dir = STATE.initialize_run(root, "clean-import", tasks_file=tasks_file)
+
+            self.assertTrue(run_dir.is_dir())
+            machine = STATE.StateMachine(run_dir)
+            self.assertTrue(machine.verify_integrity()["valid"])
+            self.assertEqual(2, machine.status()["total_task_ids"])
+
     def test_manual_managed_file_edit_is_detected_before_next_transition(self):
         with tempfile.TemporaryDirectory() as temp:
             run_dir, machine = self.make_run(Path(temp))
@@ -694,21 +790,185 @@ class EvidenceStateTests(unittest.TestCase):
             machine.add_task(task("TASK-001"))
             machine.lock_tasks()
             complete_task(machine, "TASK-001")
+            events = machine._evidence_events()
+            fingerprint = next(
+                item["artifact_fingerprint"]
+                for item in events
+                if item["event_type"] == "evidence_submitted"
+            )
 
             machine.record_evidence(
                 {
-                    "event_type": "review_finding",
+                    "event_type": "review_finding_packet",
                     "task_id": "TASK-001",
-                    "finding_id": "FIND-LATE",
+                    "packet_id": "PACKET-LATE",
+                    "reviewer_agent_id": "reviewer-TASK-001",
+                    "artifact_fingerprint": fingerprint,
                     "material": True,
-                    "severity": "major",
-                    "summary": "A late material defect was found.",
+                    "findings": [
+                        {
+                            "finding_id": "FIND-LATE",
+                            "severity": "major",
+                            "root_cause_family": "correctness",
+                            "summary": "A late material defect was found.",
+                        }
+                    ],
+                    "summary": "Consolidated late material finding.",
                 }
             )
 
             status = machine.status()
             self.assertEqual(0, status["lead_validated_task_ids"])
             self.assertFalse(status["can_complete"])
+
+    def test_retired_review_finding_and_finding_resolved_events_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(Path(temp))
+            machine.add_task(task("TASK-001"))
+            machine.lock_tasks()
+            machine.record_evidence(assignment("TASK-001"))
+
+            with self.assertRaisesRegex(STATE.TransitionError, "Unsupported evidence event"):
+                machine.record_evidence(
+                    {
+                        "event_type": "review_finding",
+                        "task_id": "TASK-001",
+                        "finding_id": "FIND-1",
+                        "material": True,
+                        "summary": "Unregistered agent attempts a legacy finding.",
+                    }
+                )
+            with self.assertRaisesRegex(STATE.TransitionError, "Unsupported evidence event"):
+                machine.record_evidence(
+                    {
+                        "event_type": "finding_resolved",
+                        "task_id": "TASK-001",
+                        "finding_id": "FIND-1",
+                        "summary": "Author attempts a legacy self-resolution.",
+                    }
+                )
+
+    def test_replay_of_completion_cannot_reuse_stale_clean_review_after_correction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(Path(temp))
+            machine.add_task(task("TASK-001"))
+            machine.lock_tasks()
+            complete_task(machine, "TASK-001")
+            events = machine._evidence_events()
+            fingerprint = next(
+                item["artifact_fingerprint"]
+                for item in events
+                if item["event_type"] == "evidence_submitted"
+            )
+            self.assertEqual(1, machine.status()["lead_validated_task_ids"])
+
+            # The assigned reviewer files a late material finding against the
+            # already-completed, unchanged candidate.
+            machine.record_evidence(
+                {
+                    "event_type": "review_finding_packet",
+                    "task_id": "TASK-001",
+                    "packet_id": "PACKET-REPLAY",
+                    "reviewer_agent_id": "reviewer-TASK-001",
+                    "artifact_fingerprint": fingerprint,
+                    "material": True,
+                    "findings": [
+                        {
+                            "finding_id": "FIND-REPLAY",
+                            "severity": "major",
+                            "root_cause_family": "correctness",
+                            "summary": "Late material defect discovered after completion.",
+                        }
+                    ],
+                    "summary": "Late consolidated finding on the completed candidate.",
+                }
+            )
+            self.assertEqual(0, machine.status()["lead_validated_task_ids"])
+
+            # The assigned author "resolves" it via a well-bound correction cycle
+            # WITHOUT ever submitting new evidence (the candidate is unchanged).
+            machine.record_evidence(
+                {
+                    "event_type": "correction_cycle",
+                    "task_id": "TASK-001",
+                    "agent_id": "author-TASK-001",
+                    "cycle": 1,
+                    "candidate_fingerprint": fingerprint,
+                    "finding_packet_id": "PACKET-REPLAY",
+                    "summary": "Author claims the finding is addressed without new evidence.",
+                }
+            )
+
+            # Reusing the ORIGINAL (pre-finding) clean review to re-validate
+            # completion must fail: that clean review already validated one
+            # completion and no fresh reviewer attestation has occurred since.
+            with self.assertRaisesRegex(STATE.TransitionError, "already consumed"):
+                machine.record_evidence(
+                    {
+                        "event_type": "lead_validated",
+                        "task_id": "TASK-001",
+                        "lead_agent_id": "lead-TASK-001-replay",
+                        "lead": {
+                            "agent_id": "lead-TASK-001-replay",
+                            "model": "model-x",
+                            "reasoning_effort": "high",
+                        },
+                        "comparison_basis": "same_model_same_or_higher_effort",
+                        "capability_requirement_met": True,
+                        "disposition": "completed",
+                        "artifact_fingerprint": fingerprint,
+                        "summary": "Attempted replay completion reusing the stale clean review.",
+                    }
+                )
+
+            self.assertEqual(0, machine.status()["lead_validated_task_ids"])
+            self.assertFalse(machine.status()["can_complete"])
+
+            # A genuinely new submission and fresh clean review still legitimately
+            # re-completes the task.
+            corrected_path = write_artifact(
+                machine, "TASK-001", name="corrected.txt", content="corrected proof"
+            )
+            new_submission = machine.record_evidence(
+                {
+                    "event_type": "evidence_submitted",
+                    "task_id": "TASK-001",
+                    "agent_id": "author-TASK-001",
+                    "requirements_satisfied": ["REQ-TASK-001"],
+                    "artifact_paths": [corrected_path],
+                    "summary": "Genuinely corrected proof.",
+                }
+            )
+            new_fingerprint = new_submission["artifact_fingerprint"]
+            machine.record_evidence(
+                {
+                    "event_type": "review_clean",
+                    "task_id": "TASK-001",
+                    "reviewer_agent_id": "reviewer-TASK-001",
+                    "artifact_fingerprint": new_fingerprint,
+                    "statement": "no_material_improvement_found",
+                }
+            )
+            machine.record_evidence(
+                {
+                    "event_type": "lead_validated",
+                    "task_id": "TASK-001",
+                    "lead_agent_id": "lead-TASK-001-2",
+                    "lead": {
+                        "agent_id": "lead-TASK-001-2",
+                        "model": "model-x",
+                        "reasoning_effort": "high",
+                    },
+                    "comparison_basis": "same_model_same_or_higher_effort",
+                    "capability_requirement_met": True,
+                    "disposition": "completed",
+                    "artifact_fingerprint": new_fingerprint,
+                    "summary": "Independent re-validation of a genuinely corrected candidate.",
+                }
+            )
+
+            self.assertEqual(1, machine.status()["lead_validated_task_ids"])
+            self.assertTrue(machine.status()["can_complete"])
 
     def test_late_changed_evidence_invalidates_lead_validation(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1138,6 +1398,143 @@ class EvidenceStateTests(unittest.TestCase):
                 authority_receipt_id=matching,
             )
             self.assertEqual("EXECUTING", machine.status()["run_state"])
+
+    def test_needs_user_decision_survives_unrelated_tandem_assignment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(Path(temp), review_cycle_limit=5)
+            machine.add_task(task("TASK-001"))
+            machine.add_task(task("TASK-002"))
+            machine.lock_tasks()
+            machine.record_evidence(assignment("TASK-001"))
+            for cycle in range(1, 5):
+                record_bound_cycle(machine, "TASK-001", cycle)
+            with self.assertRaises(STATE.TransitionError):
+                record_bound_cycle(machine, "TASK-001", 5)
+
+            status_before = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status_before["run_state"])
+            decision_before = status_before["needs_user_decision"]
+
+            machine.record_evidence(assignment("TASK-002"))
+
+            status_after = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status_after["run_state"])
+            self.assertEqual(decision_before, status_after["needs_user_decision"])
+
+    def test_needs_user_decision_survives_unrelated_inbudget_add_task(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(
+                Path(temp), auto=True, review_cycle_limit=5, create_task_limit=20
+            )
+            machine.add_task(task("TASK-001"))
+            machine.lock_tasks()
+            machine.record_evidence(assignment("TASK-001"))
+            for cycle in range(1, 5):
+                record_bound_cycle(machine, "TASK-001", cycle)
+            with self.assertRaises(STATE.TransitionError):
+                record_bound_cycle(machine, "TASK-001", 5)
+
+            status_before = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status_before["run_state"])
+            decision_before = status_before["needs_user_decision"]
+
+            machine.add_task(task("TASK-002"), decision_id=auto_decision(machine, "TASK-002"))
+
+            status_after = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status_after["run_state"])
+            self.assertEqual(decision_before, status_after["needs_user_decision"])
+            self.assertEqual(2, status_after["total_task_ids"])
+
+    def test_needs_user_decision_survives_unrelated_lead_validated_completion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(Path(temp), review_cycle_limit=5)
+            machine.add_task(task("TASK-001"))
+            machine.add_task(task("TASK-002"))
+            machine.lock_tasks()
+            machine.record_evidence(assignment("TASK-001"))
+            for cycle in range(1, 5):
+                record_bound_cycle(machine, "TASK-001", cycle)
+            with self.assertRaises(STATE.TransitionError):
+                record_bound_cycle(machine, "TASK-001", 5)
+
+            status_before = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status_before["run_state"])
+            decision_before = status_before["needs_user_decision"]
+
+            complete_task(machine, "TASK-002")
+
+            status_after = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status_after["run_state"])
+            self.assertEqual(decision_before, status_after["needs_user_decision"])
+            self.assertIn("TASK-002", status_after["completed_task_ids"])
+            self.assertFalse(status_after["can_complete"])
+
+    def _create_two_independent_blockers(self, machine) -> None:
+        machine.add_task(task("TASK-001"))
+        machine.lock_tasks()
+        machine.record_evidence(assignment("TASK-001"))
+        with self.assertRaises(STATE.TransitionError):
+            record_bound_cycle(machine, "TASK-001", 1)
+
+        machine.add_task(task("TASK-002"), decision_id=auto_decision(machine, "TASK-002"))
+        with self.assertRaises(STATE.TaskLimitExceeded):
+            machine.add_task(
+                task("TASK-003"), decision_id=auto_decision(machine, "TASK-003")
+            )
+
+    def test_two_independent_blockers_both_surface_in_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(
+                Path(temp), auto=True, create_task_limit=1, review_cycle_limit=1
+            )
+            self._create_two_independent_blockers(machine)
+
+            status = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status["run_state"])
+            blockers = status["needs_user_decision"]
+            self.assertEqual(2, len(blockers))
+            reasons = {(blocker["reason"], blocker["task_id"]) for blocker in blockers}
+            self.assertEqual(
+                {("review_cycle_limit", "TASK-001"), ("create_task_limit", "TASK-003")},
+                reasons,
+            )
+
+    def test_resolving_one_blocker_leaves_the_other_until_both_are_cleared(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, machine = self.make_run(
+                Path(temp), auto=True, create_task_limit=1, review_cycle_limit=1
+            )
+            self._create_two_independent_blockers(machine)
+
+            review_receipt = authority(
+                machine, "AUTH-REVIEW-LIMIT", "configure_limit", "review_cycle_limit", 2
+            )
+            machine.configure_limits(
+                review_cycle_limit=2, authority_receipt_id=review_receipt
+            )
+
+            status = machine.status()
+            self.assertEqual("NEEDS_USER_DECISION", status["run_state"])
+            blockers = status["needs_user_decision"]
+            self.assertEqual(1, len(blockers))
+            self.assertEqual("create_task_limit", blockers[0]["reason"])
+            self.assertEqual("TASK-003", blockers[0]["task_id"])
+
+            create_receipt = authority(
+                machine, "AUTH-CREATE-LIMIT", "configure_limit", "create_task_limit", 2
+            )
+            machine.configure_limits(
+                create_task_limit=2, authority_receipt_id=create_receipt
+            )
+
+            status = machine.status()
+            self.assertEqual("EXECUTING", status["run_state"])
+            self.assertEqual([], status["needs_user_decision"])
+
+            machine.add_task(
+                task("TASK-003"), decision_id=auto_decision(machine, "TASK-003")
+            )
+            self.assertEqual(2, machine.status()["auto_created_tasks"])
 
     def test_unknown_and_cyclic_dependencies_fail_task_lock(self):
         with tempfile.TemporaryDirectory() as first_temp:
