@@ -1,0 +1,12 @@
+{
+  "title": "Add an in-scope operational task",
+  "task_ids": ["TASK-004"],
+  "stage": "EXECUTING",
+  "decision": "Create TASK-004 within the locked outcome.",
+  "rationale": "The task is necessary to satisfy an existing acceptance criterion.",
+  "authority_basis": "Approved --auto policy",
+  "scope_impact": "No expansion of the locked task contract outcome.",
+  "scope_classification": "within_locked_scope",
+  "reversibility": "reversible",
+  "confidence": "high"
+}

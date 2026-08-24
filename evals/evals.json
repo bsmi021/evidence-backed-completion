@@ -1,0 +1,53 @@
+{
+  "skill_name": "evidence-backed-completion",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We need to replace a service cache, add bounded retry behavior, and update operator documentation. I do not have a task file. Start this under the evidence-backed completion workflow, but do not modify application files until the workflow prerequisites are satisfied. Produce the first response you would send and only the run artifacts that are legitimately allowed at this point.",
+      "expected_output": "The agent requires a task file, offers a structured discovery interview, and does not start implementation or falsely initialize a locked executable run.",
+      "files": [],
+      "expectations": [
+        "The response explicitly requires a task file before implementation can begin.",
+        "The response offers a structured discovery interview when the user has no task file.",
+        "No application implementation, locked run ledger, or completion claim is produced prematurely."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Use --auto --createTaskLimit 3 to prepare an evidence-backed run for a small Python CLI with three requested outcomes: parse input, validate values, and render a summary. Work only in the assigned output directory. Initialize the isolated run, create and lock the three tasks with concrete acceptance and evidence requirements, record autonomous decisions, and report status. Do not implement the CLI itself.",
+      "expected_output": "The agent uses the skill state machine to create a collision-proof run directory, three chained task records, DECISIONS.md, locked initial count 3, auto mode, and status showing zero validated tasks without overclaiming implementation.",
+      "files": [],
+      "expectations": [
+        "An isolated runs/<date>-<name>-<id> directory is created by the bundled state machine.",
+        "run.json records auto=true and create_task_limit=3.",
+        "tasks.jsonl contains exactly three unique chained task records with concrete acceptance criteria and evidence requirements.",
+        "state.json records tasks_locked=true and initial_task_count=3.",
+        "DECISIONS.md records at least one material autonomous decision.",
+        "Integrity verification passes and status reports zero lead-validated tasks without claiming the CLI was implemented."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "A team claims a two-task run is complete because evidence.jsonl contains eight lines. TASK-001 has a valid lead completion. TASK-002 is blocked; its author and reviewer are the same agent, the declared reviewer effort is lower, and the clean-review fingerprint differs from the submitted artifact. Produce the final completion determination and the status facts that support it. Do not repair the run.",
+      "expected_output": "The agent rejects completion, counts unique lead-validated task IDs rather than evidence lines, identifies fail-closed capability and fingerprint violations, and reports the blocked remaining task.",
+      "files": [],
+      "expectations": [
+        "The final determination explicitly rejects run completion.",
+        "The response counts one of two unique task IDs as lead validated rather than treating eight evidence lines as eight completions.",
+        "The response identifies the blocked task, non-independent tandem, lower reviewer capability, and artifact fingerprint mismatch as material blockers.",
+        "The response does not repair the run or imply that targeted evidence proves broader completion."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Adversarially review this function read-only and identify concrete defects: `def divide(a, b): return a / b`. I am asking for an ordinary adversarial code review, not an evidence ledger, monitored autonomous run, task decomposition, or formal completion protocol.",
+      "expected_output": "The agent handles the ordinary review directly, identifies relevant input and zero-division risks, and does not invoke or initialize the formal evidence-backed-completion workflow.",
+      "files": [],
+      "expectations": [
+        "The response does not initialize tasks.jsonl, evidence.jsonl, a run directory, or the formal tandem/lead protocol.",
+        "The response treats the request as an ordinary adversarial code review rather than invoking evidence-backed-completion.",
+        "The response provides a concise substantive review of division-by-zero and input-type behavior."
+      ]
+    }
+  ]
+}

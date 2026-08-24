@@ -1,0 +1,18 @@
+[
+  {
+    "query": "Run this implementation under --auto with a task ledger, five-minute updates, and proof for every task.",
+    "should_trigger": true
+  },
+  {
+    "query": "I need evidence-backed completion for these seven fixes; do not return until every task has independently validated proof.",
+    "should_trigger": true
+  },
+  {
+    "query": "Adversarially review this one function for bugs. Stay read-only; I do not need a formal ledger or monitored run.",
+    "should_trigger": false
+  },
+  {
+    "query": "Explain why this test failed in two paragraphs.",
+    "should_trigger": false
+  }
+]

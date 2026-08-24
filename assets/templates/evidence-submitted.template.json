@@ -1,0 +1,8 @@
+{
+  "event_type": "evidence_submitted",
+  "task_id": "TASK-001",
+  "agent_id": "author-1",
+  "requirements_satisfied": ["REQ-TASK-001-FOCUSED"],
+  "artifact_paths": ["artifacts/TASK-001/focused-test-result.txt"],
+  "summary": "The focused evidence requirement passed against the listed artifact."
+}

@@ -1,0 +1,20 @@
+{
+  "name": "evidence-backed-completion",
+  "displayName": "Evidence-based Completion",
+  "version": "0.1.0",
+  "description": "Coordinates formal, non-trivial work through a machine-readable task/evidence ledger: locked task contracts, independent author/reviewer tandems, SHA-256-bound evidence artifacts, and lead-validated completion so partial or self-attested work can't be reported as done.",
+  "author": {
+    "name": "bsmi021",
+    "url": "https://github.com/bsmi021"
+  },
+  "homepage": "https://github.com/bsmi021/evidence-backed-completion",
+  "repository": "https://github.com/bsmi021/evidence-backed-completion",
+  "license": "MIT",
+  "keywords": [
+    "evidence-backed",
+    "task-ledger",
+    "adversarial-review",
+    "completion-verification",
+    "workflow-automation"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "evidence-backed-completion",
+  "description": "Single-plugin marketplace, so this repository can be registered and installed directly with the Claude Code CLI, which resolves installs from marketplaces rather than from directory paths.",
+  "owner": {
+    "name": "bsmi021",
+    "url": "https://github.com/bsmi021"
+  },
+  "metadata": {
+    "version": "0.5.0"
+  },
+  "plugins": [
+    {
+      "name": "evidence-backed-completion",
+      "displayName": "Evidence-backed Completion",
+      "description": "Coordinates formal, non-trivial work through a machine-readable task/evidence ledger: locked task contracts, independent author/reviewer tandems, SHA-256-bound evidence artifacts, and lead-validated completion so partial or self-attested work can't be reported as done.",
+      "version": "0.1.0",
+      "category": "development",
+      "keywords": [
+        "evidence-backed",
+        "task-ledger",
+        "adversarial-review",
+        "completion-verification",
+        "workflow-automation"
+      ],
+      "author": {
+        "name": "bsmi021",
+        "url": "https://github.com/bsmi021"
+      },
+      "license": "MIT",
+      "homepage": "https://github.com/bsmi021/evidence-backed-completion",
+      "source": "./"
+    }
+  ]
+}

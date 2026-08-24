@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evidence-Backed Completion"
+  short_description: "Coordinate tasks with validated completion evidence"
+  default_prompt: "Use $evidence-backed-completion to execute this work with task-level evidence and independent validation."

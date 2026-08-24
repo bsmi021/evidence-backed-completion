@@ -1,0 +1,7 @@
+{
+  "event_type": "review_clean",
+  "task_id": "TASK-001",
+  "reviewer_agent_id": "reviewer-1",
+  "artifact_fingerprint": "sha256:<fingerprint returned by evidence-add>",
+  "statement": "no_material_improvement_found"
+}

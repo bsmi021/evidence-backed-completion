@@ -1,0 +1,8 @@
+{
+  "event_type": "tandem_assigned",
+  "task_id": "TASK-001",
+  "author": {"agent_id": "author-1", "model": "model-x", "reasoning_effort": "high"},
+  "reviewer": {"agent_id": "reviewer-1", "model": "model-x", "reasoning_effort": "high"},
+  "comparison_basis": "same_model_same_or_higher_effort",
+  "capability_requirement_met": true
+}

@@ -1,0 +1,8 @@
+{
+  "receipt_id": "AUTH-001",
+  "action": "configure_limit",
+  "target": "create_task_limit",
+  "value": 30,
+  "exact_user_instruction": "Increase the create task limit to 30.",
+  "lead_agent_id": "lead-1"
+}
