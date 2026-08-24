@@ -45,9 +45,7 @@ VALID_EVIDENCE_EVENTS = {
     "work_started",
     "evidence_submitted",
     "preflight_failure",
-    "review_finding",
     "review_finding_packet",
-    "finding_resolved",
     "correction_cycle",
     "review_clean",
     "task_blocked",
@@ -256,6 +254,18 @@ def validate_task_definition(task: dict[str, Any]) -> None:
             raise TransitionError("Evidence requirements need description and kind")
 
 
+def _advance_run_state(state: dict[str, Any], candidate: str) -> None:
+    if state["run_state"] != "NEEDS_USER_DECISION":
+        state["run_state"] = candidate
+
+
+def _add_needs_user_decision_blocker(state: dict[str, Any], blocker: dict[str, Any]) -> None:
+    blockers = state.get("needs_user_decision") or []
+    if blocker not in blockers:
+        blockers.append(blocker)
+    state["needs_user_decision"] = blockers
+
+
 def initialize_run(
     repo_root: str | Path,
     run_name: str,
@@ -316,7 +326,7 @@ def initialize_run(
             "decision_ids": [],
             "decision_records": {},
             "task_contract_hash": None,
-            "needs_user_decision": None,
+            "needs_user_decision": [],
             "last_transition": "run_initialized",
             "updated_at": created_at,
         },
@@ -343,13 +353,17 @@ def initialize_run(
     machine._refresh_integrity_unlocked()
     if tasks_file is not None:
         source = Path(tasks_file)
-        for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                machine.add_task(json.loads(line))
-            except Exception as exc:
-                raise TransitionError(f"Unable to import {source}:{line_number}: {exc}") from exc
+        try:
+            for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.strip():
+                    continue
+                try:
+                    machine.add_task(json.loads(line))
+                except Exception as exc:
+                    raise TransitionError(f"Unable to import {source}:{line_number}: {exc}") from exc
+        except Exception:
+            shutil.rmtree(run_dir, ignore_errors=False)
+            raise
     return run_dir
 
 
@@ -660,14 +674,17 @@ class StateMachine:
                 else:
                     if state["auto_created_tasks"] >= config["create_task_limit"]:
                         state["run_state"] = "NEEDS_USER_DECISION"
-                        state["needs_user_decision"] = {
-                            "reason": "create_task_limit",
-                            "task_id": task_id,
-                            "observed_value": state["auto_created_tasks"],
-                            "required_action": "configure_limit",
-                            "target": "create_task_limit",
-                            "minimum_value": state["auto_created_tasks"] + 1,
-                        }
+                        _add_needs_user_decision_blocker(
+                            state,
+                            {
+                                "reason": "create_task_limit",
+                                "task_id": task_id,
+                                "observed_value": state["auto_created_tasks"],
+                                "required_action": "configure_limit",
+                                "target": "create_task_limit",
+                                "minimum_value": state["auto_created_tasks"] + 1,
+                            },
+                        )
                         self._write_state(state, "create_task_limit_reached")
                         pending_error = TaskLimitExceeded(
                             f"Task limit {config['create_task_limit']} reached before adding {task_id}"
@@ -689,7 +706,7 @@ class StateMachine:
                 if state["run_state"] in {"AWAITING_TASKS", "TASKS_DRAFT"}:
                     state["run_state"] = "TASKS_DRAFT"
                 elif after_lock:
-                    state["run_state"] = "EXECUTING"
+                    _advance_run_state(state, "EXECUTING")
                 self._write_state(state, "task_created")
         if pending_error is not None:
             raise pending_error
@@ -748,7 +765,9 @@ class StateMachine:
                     "decision_id": decision_id,
                 },
             )
-            state["run_state"] = "EXECUTING" if state["tasks_locked"] else "TASKS_DRAFT"
+            _advance_run_state(
+                state, "EXECUTING" if state["tasks_locked"] else "TASKS_DRAFT"
+            )
             self._write_state(state, "task_revised")
             return event
 
@@ -813,7 +832,7 @@ class StateMachine:
                 },
             )
             state = self._state()
-            state["run_state"] = "EXECUTING"
+            _advance_run_state(state, "EXECUTING")
             self._write_state(state, "task_superseded")
             return event
 
@@ -839,7 +858,7 @@ class StateMachine:
                 },
             )
             state = self._state()
-            state["run_state"] = "EXECUTING"
+            _advance_run_state(state, "EXECUTING")
             self._write_state(state, "task_cancelled")
             return event
 
@@ -947,23 +966,31 @@ class StateMachine:
                 }
             )
             if state["run_state"] == "NEEDS_USER_DECISION":
-                pending = state.get("needs_user_decision") or {}
                 changed_target = (
                     "create_task_limit" if create_task_limit is not None else "review_cycle_limit"
                 )
                 changed_value = (
                     create_task_limit if create_task_limit is not None else review_cycle_limit
                 )
-                if (
-                    pending.get("required_action") == "configure_limit"
-                    and pending.get("target") == changed_target
-                    and changed_value is not None
-                    and changed_value >= pending.get("minimum_value", changed_value)
-                ):
+
+                def _is_resolved(blocker: dict[str, Any]) -> bool:
+                    return (
+                        blocker.get("required_action") == "configure_limit"
+                        and blocker.get("target") == changed_target
+                        and changed_value is not None
+                        and changed_value >= blocker.get("minimum_value", changed_value)
+                    )
+
+                remaining = [
+                    blocker
+                    for blocker in state.get("needs_user_decision") or []
+                    if not _is_resolved(blocker)
+                ]
+                state["needs_user_decision"] = remaining
+                if not remaining:
                     state["run_state"] = (
                         "EXECUTING" if state["tasks_locked"] else "TASKS_DRAFT"
                     )
-                    state["needs_user_decision"] = None
             self._write_state(state, "limits_configured")
 
     def _current_revision_events(
@@ -981,12 +1008,8 @@ class StateMachine:
     def _open_material_findings(events: list[dict[str, Any]]) -> set[str]:
         open_findings: set[str] = set()
         for event in events:
-            if event["event_type"] == "review_finding" and event.get("material"):
-                open_findings.add(event["finding_id"])
-            elif event["event_type"] == "review_finding_packet" and event.get("material"):
+            if event["event_type"] == "review_finding_packet" and event.get("material"):
                 open_findings.add(event["packet_id"])
-            elif event["event_type"] == "finding_resolved":
-                open_findings.discard(event["finding_id"])
             elif event["event_type"] == "correction_cycle":
                 open_findings.discard(event.get("finding_packet_id"))
         return open_findings
@@ -1139,9 +1162,6 @@ class StateMachine:
                 raise TransitionError("Preflight failure requires a stable failure_signature")
             if not event.get("agent_id") or not event.get("summary"):
                 raise TransitionError("Preflight failure requires agent_id and diagnostic summary")
-        elif event_type == "review_finding":
-            if not event.get("finding_id") or not isinstance(event.get("material"), bool):
-                raise TransitionError("Review findings require finding_id and material boolean")
         elif event_type == "review_finding_packet":
             packet_id = event.get("packet_id")
             if not isinstance(packet_id, str) or not packet_id.strip():
@@ -1197,14 +1217,6 @@ class StateMachine:
                 for name in ("severity", "root_cause_family", "summary"):
                     if not isinstance(finding.get(name), str) or not finding[name].strip():
                         raise TransitionError(f"Finding packet entry requires {name}")
-        elif event_type == "finding_resolved":
-            known = {
-                item["finding_id"]
-                for item in current_events
-                if item["event_type"] == "review_finding"
-            }
-            if event.get("finding_id") not in known:
-                raise TransitionError("Cannot resolve an unknown finding")
         elif event_type == "correction_cycle":
             cycle = int(event.get("cycle", 0))
             if cycle < 1:
@@ -1296,6 +1308,16 @@ class StateMachine:
                 if not clean_reviews:
                     raise TransitionError("Completed disposition requires a clean adversarial review")
                 clean = clean_reviews[-1]
+                if any(
+                    item["event_type"] == "lead_validated"
+                    and item.get("disposition") == "completed"
+                    and item["sequence"] > clean["sequence"]
+                    for item in current_events
+                ):
+                    raise TransitionError(
+                        "This clean review was already consumed by a prior completion; "
+                        "a new clean review is required"
+                    )
                 if event.get("artifact_fingerprint") != clean["artifact_fingerprint"]:
                     raise TransitionError("Artifact changed after the clean adversarial review")
                 submissions = [
@@ -1427,20 +1449,23 @@ class StateMachine:
                 result = append_jsonl_event(self.evidence_path, payload)
                 if cycle >= self._run_config()["review_cycle_limit"]:
                     state["run_state"] = "NEEDS_USER_DECISION"
-                    state["needs_user_decision"] = {
-                        "reason": "review_cycle_limit",
-                        "task_id": task_id,
-                        "observed_value": cycle,
-                        "required_action": "configure_limit",
-                        "target": "review_cycle_limit",
-                        "minimum_value": cycle + 1,
-                    }
+                    _add_needs_user_decision_blocker(
+                        state,
+                        {
+                            "reason": "review_cycle_limit",
+                            "task_id": task_id,
+                            "observed_value": cycle,
+                            "required_action": "configure_limit",
+                            "target": "review_cycle_limit",
+                            "minimum_value": cycle + 1,
+                        },
+                    )
                     self._write_state(state, "review_cycle_limit_reached")
                     pending_error = TransitionError(
                         "Correction cycle limit reached; user decision required"
                     )
                 else:
-                    state["run_state"] = "EXECUTING"
+                    _advance_run_state(state, "EXECUTING")
                     self._write_state(state, "correction_cycle")
             else:
                 self._validate_evidence_event(payload, snapshot, current_events)
@@ -1448,19 +1473,18 @@ class StateMachine:
                 if event_type == "lead_validated":
                     projected = existing + [result]
                     projected_status = self._status_unlocked(projected)
-                    state["run_state"] = (
-                        "FINAL_VALIDATION" if projected_status["can_complete"] else "EXECUTING"
+                    _advance_run_state(
+                        state,
+                        "FINAL_VALIDATION" if projected_status["can_complete"] else "EXECUTING",
                     )
                 elif event_type in {
                     "tandem_assigned",
                     "work_started",
                     "evidence_submitted",
                     "preflight_failure",
-                    "review_finding",
                     "review_finding_packet",
-                    "finding_resolved",
                 }:
-                    state["run_state"] = "EXECUTING"
+                    _advance_run_state(state, "EXECUTING")
                 self._write_state(state, event_type)
         if pending_error is not None:
             raise pending_error
@@ -1558,7 +1582,7 @@ class StateMachine:
             "run_id": config["run_id"],
             "run_name": config["run_name"],
             "run_state": state["run_state"],
-            "needs_user_decision": state.get("needs_user_decision"),
+            "needs_user_decision": state.get("needs_user_decision") or [],
             "auto": config["auto"],
             "total_task_ids": len(snapshots),
             "active_required_tasks": len(active_ids),

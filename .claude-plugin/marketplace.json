@@ -14,7 +14,7 @@
       "name": "evidence-backed-completion",
       "displayName": "Evidence-backed Completion",
       "description": "Coordinates formal, non-trivial work through a machine-readable task/evidence ledger: locked task contracts, independent author/reviewer tandems, SHA-256-bound evidence artifacts, and lead-validated completion so partial or self-attested work can't be reported as done.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "development",
       "keywords": [
         "evidence-backed",

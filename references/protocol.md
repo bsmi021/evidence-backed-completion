@@ -64,6 +64,11 @@ Retain a task ID for title, acceptance, or evidence clarification that preserves
 the outcome. After lock, record a decision bound to the locked task-contract
 hash. Objective, task type, or dependency changes require a new task ID.
 
+Any revision, including such a clarification, still bumps the task's revision
+counter and invalidates every prior `tandem_assigned`, `evidence_submitted`,
+`review_clean`, and `lead_validated` event for that task, so the tandem-review-
+validate cycle restarts from scratch; weigh that reset cost before revising.
+
 Post-lock new IDs consume the autonomous task budget. Default: 20;
 `--createTaskLimit N` overrides it. Superseded or cancelled IDs never refund the
 budget. Every post-lock auto creation needs a recorded
@@ -193,11 +198,21 @@ The bootstrap creates one workspace-compliant run:
 
 Initialize from the installed skill script:
 
+**PowerShell:**
+
 ```powershell
 python "<skill-dir>\scripts\evidence_state.py" init --repo-root "<root>" --run-name "<name>" --tasks-file "<tasks.jsonl>" [--auto] [--createTaskLimit 20] [--reviewCycleLimit 5]
 ```
 
+**bash/zsh:**
+
+```bash
+python "<skill-dir>/scripts/evidence_state.py" init --repo-root "<root>" --run-name "<name>" --tasks-file "<tasks.jsonl>" [--auto] [--createTaskLimit 20] [--reviewCycleLimit 5]
+```
+
 Then use the copied run-local script:
+
+**PowerShell:**
 
 ```powershell
 python ".\runs\...\state_machine.py" authority-register --authority-file "<authority.json>"
@@ -213,9 +228,32 @@ python ".\runs\...\state_machine.py" verify
 python ".\runs\...\state_machine.py" report --final
 ```
 
+**bash/zsh:**
+
+```bash
+python "./runs/.../state_machine.py" authority-register --authority-file "<authority.json>"
+python "./runs/.../state_machine.py" decision-add --decision-file "<decision.json>"
+python "./runs/.../state_machine.py" task-add --task-file "<task.json>" [--decision-id DEC-...] [--authority-receipt-id AUTH-...]
+python "./runs/.../state_machine.py" task-revise --task-id TASK-001 --changes-file "<changes.json>" --decision-id DEC-...
+python "./runs/.../state_machine.py" task-lock
+python "./runs/.../state_machine.py" evidence-add --event-file "<single-event.json>"
+python "./runs/.../state_machine.py" runlog-add --kind activity --message "<status or action>"
+python "./runs/.../state_machine.py" configure --createTaskLimit 30 --authority-receipt-id AUTH-...
+python "./runs/.../state_machine.py" status
+python "./runs/.../state_machine.py" verify
+python "./runs/.../state_machine.py" report --final
+```
+
 `task-supersede` and `task-cancel` use the same disposition rules. Each input
 template under `assets/templates/` is either accepted by the named command or
 explicitly marked as an illustrative generated-output shape.
+
+Every mutating command above acquires a single `locks/state.lock` file lock
+for the whole run directory (default 10-second timeout, 50ms retry interval),
+so when multiple dependency-ready tandems submit evidence at the same time
+their writes serialize on this one lock rather than running in parallel. A
+`LockTimeout` error means another writer held the lock past the timeout —
+treat it as transient and retry the command, not as a protocol failure.
 
 ## Five-minute status and run log
 

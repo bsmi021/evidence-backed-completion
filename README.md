@@ -19,6 +19,13 @@ one, or a final summary claims broad completion off the back of one targeted
 check. This plugin closes those gaps by making completion a property of a
 verified ledger, not of a chat transcript.
 
+The ledger verifies that evidence was produced and independently reviewed,
+and that completion claims match that evidence — it does not sandbox the
+agents doing the work. Nothing in the tooling can detect or prevent a worker
+agent from taking a destructive, external, or credentialed action while it
+produces that evidence; the auto-mode boundary documented in `SKILL.md` is an
+instruction the agent is expected to follow, not a technical control.
+
 ## Installation
 
 ```bash
